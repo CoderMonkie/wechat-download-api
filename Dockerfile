@@ -21,7 +21,7 @@ FROM python:3.11-slim
 
 LABEL maintainer="tmwgsicp"
 LABEL description="WeChat Official Account Article Download API with RSS Support"
-LABEL version="1.0.4"
+LABEL version="1.0.5"
 
 WORKDIR /app
 

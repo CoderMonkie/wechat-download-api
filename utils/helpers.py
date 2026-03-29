@@ -361,12 +361,14 @@ def _extract_audio_content(html: str) -> Dict:
             dur_str = f' ({minutes}:{seconds:02d})'
 
         display_name = audio['name'] or f'Audio {i + 1}'
+        # 友好提示：音频需要微信鉴权，不提供无法播放的URL
         html_parts.append(
-            f'<div style="margin:12px 0;padding:12px 16px;background:#f6f6f6;border-radius:8px">'
-            f'<p style="margin:0 0 4px;font-size:15px;font-weight:500">'
-            f'{html_module.escape(display_name)}{dur_str}</p>'
-            f'<a href="{audio["url"]}" style="color:#1890ff;font-size:14px">'
-            f'[Play Audio / Click to Listen]</a>'
+            f'<div style="margin:12px 0;padding:12px 16px;background:#fff9e6;'
+            f'border-left:4px solid #fa8c16;border-radius:4px">'
+            f'<p style="margin:0 0 4px;font-size:14px;color:#595959;font-weight:500">'
+            f'音频内容: {html_module.escape(display_name)}{dur_str}</p>'
+            f'<p style="margin:0;font-size:13px;color:#8c8c8c">'
+            f'此文章包含音频，需要在微信中查看完整内容</p>'
             f'</div>'
         )
 
@@ -427,6 +429,22 @@ def _extract_audio_share_content(html: str) -> Dict:
     
     # 生成内容
     content_parts = []
+    
+    # 标题（如果有）
+    if title:
+        content_parts.append(
+            f'<div style="margin:20px 0;text-align:center">'
+            f'<h2 style="margin:0;font-size:22px;font-weight:600;color:#262626">{title}</h2>'
+            f'</div>'
+        )
+    
+    # 作者（如果有）
+    if author:
+        content_parts.append(
+            f'<div style="margin:12px 0;text-align:center">'
+            f'<p style="margin:0;font-size:14px;color:#8c8c8c">作者: {author}</p>'
+            f'</div>'
+        )
     
     # 封面图
     if images:
@@ -682,6 +700,8 @@ def get_unavailable_reason(html: str) -> Optional[str]:
         return None
     
     # 真正的不可用标记（静态HTML中的明确文字）
+    # 注意：微信的正常文章HTML中可能在JS代码里包含"已删除"/"违规"等字符串
+    # 需要确保这些关键字是在实际内容中，而不是在JS字符串字面量中
     markers = [
         ("该内容已被发布者删除", "已被发布者删除"),
         ("内容已删除", "已被发布者删除"),
@@ -694,6 +714,21 @@ def get_unavailable_reason(html: str) -> Optional[str]:
     ]
     for keyword, reason in markers:
         if keyword in html:
+            # 额外验证：如果HTML很大(>1MB) 且有真实的内容容器，
+            # 说明是正常文章，"已删除"/"违规"可能只是JS代码中的字符串
+            if len(html) > 1000000:
+                has_real_content = (
+                    'id="js_content"' in html or
+                    'class="rich_media_content' in html
+                )
+                if has_real_content:
+                    # 进一步确认：检查关键字是否在 <body> 的前10KB可见区域
+                    # 如果只在后面的 <script> 中出现，跳过
+                    import re
+                    body_match = re.search(r'<body[^>]*>(.*?)(?:<script|$)', html[:50000], re.DOTALL | re.IGNORECASE)
+                    if body_match and keyword not in body_match.group(1):
+                        # 关键字不在body前部，可能是JS代码，跳过此marker
+                        continue
             return reason
     
     # 特殊处理："该内容暂时无法查看"独立页面

@@ -105,14 +105,21 @@ def extract_content(html: str) -> str:
     Extract article body, trying multiple container patterns.
     Different WeChat account types (government, media, personal) use
     different HTML structures. We try them in order of specificity.
-    For image-text messages (item_show_type=8) and short posts (item_show_type=10),
-    delegates to helpers.
+    For image-text messages (item_show_type=8), short posts (item_show_type=10),
+    and audio share pages (item_show_type=7), delegates to helpers.
     """
     from utils.helpers import (
         is_image_text_message, _extract_image_text_content,
         is_short_content_message, _extract_short_content,
         is_audio_message, _extract_audio_content,
+        get_item_show_type, _extract_audio_share_content,
     )
+
+    # Check for audio/video share pages (item_show_type=7) FIRST
+    # These pages use Vue apps and have no js_content div
+    if get_item_show_type(html) == '7':
+        result = _extract_audio_share_content(html)
+        return result.get('content', '')
 
     if is_image_text_message(html):
         result = _extract_image_text_content(html)
