@@ -314,13 +314,16 @@ async def _fetch_history_internal(fakeid: str, target_count: int) -> tuple:
     """
     内部历史文章获取逻辑。
     
-    历史文章定义：订阅时间之前发布的文章（publish_time < subscription.created_at）
+    历史文章定义：通过深度获取功能拉取的文章（标记为 source='deep_fetch'）
     
     流程：
-    1. 获取订阅时间和数据库中已有的历史文章数量
+    1. 获取数据库中已有的历史文章数量（source='deep_fetch'）
     2. 从已有历史文章的位置开始翻页，避免重复获取
-    3. 只保存订阅前发布的新文章
-    4. 达到目标数量或无更多历史文章时停止
+    3. 保存所有抓取的文章，标记为 source='deep_fetch'
+    4. 数据库通过 UNIQUE(fakeid, link) 自动去重：
+       - 轮询器已拉取的文章保持 source='poll'（不更新）
+       - 只有新文章被标记为 source='deep_fetch'
+    5. 达到目标数量或无更多文章时停止
     
     返回 (fetched_count, new_count)。
     """
@@ -333,15 +336,12 @@ async def _fetch_history_internal(fakeid: str, target_count: int) -> tuple:
     if not creds or not creds.get("token"):
         raise ValueError("登录凭证无效")
     
-    # 获取订阅时间
+    # 验证订阅是否存在
     sub = rss_store.get_subscription(fakeid)
     if not sub:
         raise ValueError("订阅不存在")
-    sub_time = sub.get("created_at", 0)
-    if sub_time <= 0:
-        sub_time = int(time.time())
     
-    # 获取数据库中已有的历史文章数量，从这个位置开始翻页
+    # 获取数据库中已有的历史文章数量（source='deep_fetch'），从这个位置开始翻页
     existing_historical = rss_store.count_historical_articles(fakeid)
     
     historical_articles = []
@@ -413,19 +413,19 @@ async def _fetch_history_internal(fakeid: str, target_count: int) -> tuple:
             if not isinstance(publish_info, dict):
                 continue
             for a in publish_info.get("appmsgex", []):
-                publish_time = a.get("update_time", 0)
-                
-                # 只保存订阅时间之前发布的文章（历史文章）
-                if publish_time < sub_time:
-                    batch_articles.append({
-                        "aid": a.get("aid", ""),
-                        "title": a.get("title", ""),
-                        "link": a.get("link", ""),
-                        "digest": a.get("digest", ""),
-                        "cover": a.get("cover", ""),
-                        "author": a.get("author", ""),
-                        "publish_time": publish_time,
-                    })
+                # [2026-05-06 简化] 不需要时间判断
+                # 数据库有唯一约束 UNIQUE(fakeid, link)
+                # 轮询器已拉取的文章（source='poll'）会保持原样
+                # 只有新文章才会被标记为 source='deep_fetch'
+                batch_articles.append({
+                    "aid": a.get("aid", ""),
+                    "title": a.get("title", ""),
+                    "link": a.get("link", ""),
+                    "digest": a.get("digest", ""),
+                    "cover": a.get("cover", ""),
+                    "author": a.get("author", ""),
+                    "publish_time": a.get("update_time", 0),
+                })
         
         if batch_articles:
             historical_articles.extend(batch_articles)
