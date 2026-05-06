@@ -48,6 +48,25 @@ def get_base_url(request: Request) -> str:
 
 router = APIRouter()
 
+# RSS 配置常量 - 动态限制策略
+# [2026-05-06 优化] 根据场景设置不同默认值和上限，降低内存占用
+#
+# 核心区别：
+# - 常规 RSS（单个/聚合/分类）：动态滚动更新，限制较小，节省内存
+# - 历史 RSS：静态归档内容，一次性加载，上限较高，避免文章遗漏
+
+RSS_SINGLE_DEFAULT = 30      # 单个公众号：默认 30，覆盖 6-15 天
+RSS_SINGLE_MAX = 50          # 单个公众号：最大 50
+
+RSS_AGGREGATED_DEFAULT = 4500    # 聚合 RSS：默认最大值，由窗口函数内部逻辑控制
+RSS_AGGREGATED_MAX = 4500        # 聚合 RSS：最大 4500
+
+RSS_CATEGORY_DEFAULT = 4500  # 分类 RSS：默认最大值，由窗口函数内部逻辑控制
+RSS_CATEGORY_MAX = 4500      # 分类 RSS：最大 4500
+
+RSS_HISTORICAL_DEFAULT = 500 # 历史 RSS：默认 500（付费内容，一次性加载）
+RSS_HISTORICAL_MAX = 5000    # 历史 RSS：最大 5000（支持大量历史文章，避免遗漏）
+
 
 # ── Pydantic models ──────────────────────────────────────
 
@@ -205,7 +224,7 @@ async def poller_status():
             response_class=Response)
 async def get_aggregated_rss_feed(
     request: Request,
-    limit: int = Query(200, ge=1, le=500, description="文章数量上限"),
+    limit: int = Query(RSS_AGGREGATED_DEFAULT, ge=1, le=RSS_AGGREGATED_MAX, description="文章数量上限"),
 ):
     """
     获取所有订阅公众号的聚合 RSS 2.0 订阅源。
@@ -459,9 +478,10 @@ def _build_historical_rss_xml(
         
         channel.appendChild(item)
     
-    xml_str = doc.toprettyxml(indent="  ", encoding=None)
-    lines = [line for line in xml_str.split('\n') if line.strip()]
-    xml_str = '\n'.join(lines[1:])
+    # 生成 XML 字符串（使用 toxml 而非 toprettyxml 以避免 MemoryError）
+    xml_str = doc.toxml(encoding=None)
+    if xml_str.startswith('<?xml'):
+        xml_str = xml_str.split('?>', 1)[-1].strip()
     
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
 
@@ -598,12 +618,12 @@ def _build_rss_xml(fakeid: str, sub: dict, articles: list,
         
         channel.appendChild(item)
     
-    # 生成 XML 字符串
-    xml_str = doc.toprettyxml(indent="  ", encoding=None)
+    # 生成 XML 字符串（使用 toxml 而非 toprettyxml 以避免 MemoryError）
+    xml_str = doc.toxml(encoding=None)
     
-    # 移除多余的空行和 XML 声明（我们自己添加）
-    lines = [line for line in xml_str.split('\n') if line.strip()]
-    xml_str = '\n'.join(lines[1:])  # 跳过默认的 XML 声明
+    # 移除默认的 XML 声明（我们自己添加）
+    if xml_str.startswith('<?xml'):
+        xml_str = xml_str.split('?>', 1)[-1].strip()
     
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
 
@@ -611,7 +631,7 @@ def _build_rss_xml(fakeid: str, sub: dict, articles: list,
 @router.get("/rss/{fakeid}", summary="获取 RSS 订阅源",
             response_class=Response)
 async def get_rss_feed(fakeid: str, request: Request,
-                       limit: int = Query(50, ge=1, le=100,
+                       limit: int = Query(RSS_SINGLE_DEFAULT, ge=1, le=RSS_SINGLE_MAX,
                                           description="文章数量上限")):
     """
     获取指定公众号的 RSS 2.0 订阅源（XML 格式）。
@@ -648,20 +668,27 @@ async def get_historical_rss_feed(
     fakeid: str,
     request: Request,
     page: int = Query(1, ge=1, description="页码"),
-    per_page: int = Query(100, ge=10, le=500, description="每页数量"),
+    per_page: int = Query(RSS_HISTORICAL_DEFAULT, ge=10, le=RSS_HISTORICAL_MAX, description="每页数量"),
 ):
     """
     获取指定公众号的历史文章 RSS 2.0 订阅源（XML 格式）。
     
     历史文章指订阅前发布的文章，通过"获取历史文章"功能拉取。
     与常规 RSS 分离，避免大量历史文章导致加载缓慢。
+    
+    **使用建议**：
+    - 默认 per_page=500，最大支持 5000 篇/次
+    - 如果历史文章超过 5000 篇，使用 page 参数分批加载：
+      - page=1&per_page=5000：加载 1-5000 篇
+      - page=2&per_page=5000：加载 5001-10000 篇
+    - 一次性导入后不需要频繁刷新（历史文章不会更新）
 
     **路径参数：**
     - **fakeid**: 公众号 FakeID
 
     **查询参数：**
     - **page** (可选): 页码，默认 1
-    - **per_page** (可选): 每页数量，默认 100，最大 500
+    - **per_page** (可选): 每页数量，默认 500，最大 5000
     """
     sub = rss_store.get_subscription(fakeid)
     if not sub:
@@ -807,9 +834,10 @@ def _build_aggregated_rss_xml(articles: list, nickname_map: dict,
 
         channel.appendChild(item)
 
-    xml_str = doc.toprettyxml(indent="  ", encoding=None)
-    lines = [line for line in xml_str.split('\n') if line.strip()]
-    xml_str = '\n'.join(lines[1:])
+    # 生成 XML 字符串（使用 toxml 而非 toprettyxml 以避免 MemoryError）
+    xml_str = doc.toxml(encoding=None)
+    if xml_str.startswith('<?xml'):
+        xml_str = xml_str.split('?>', 1)[-1].strip()
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
 
 
@@ -818,7 +846,7 @@ def _build_aggregated_rss_xml(articles: list, nickname_map: dict,
 @router.get("/rss/category/{category_id}", summary="获取分类 RSS 订阅源",
             response_class=Response)
 async def get_category_rss_feed(category_id: int, request: Request,
-                                limit: int = Query(200, ge=1, le=500,
+                                limit: int = Query(RSS_CATEGORY_DEFAULT, ge=1, le=RSS_CATEGORY_MAX,
                                                    description="文章数量上限")):
     """
     获取指定分类的 RSS 2.0 订阅源（XML 格式）。
@@ -966,7 +994,8 @@ def _build_category_rss_xml(category: dict, articles: list, nickname_map: dict,
 
         channel.appendChild(item)
 
-    xml_str = doc.toprettyxml(indent="  ", encoding=None)
-    lines = [line for line in xml_str.split('\n') if line.strip()]
-    xml_str = '\n'.join(lines[1:])
+    # 生成 XML 字符串（使用 toxml 而非 toprettyxml 以避免 MemoryError）
+    xml_str = doc.toxml(encoding=None)
+    if xml_str.startswith('<?xml'):
+        xml_str = xml_str.split('?>', 1)[-1].strip()
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str

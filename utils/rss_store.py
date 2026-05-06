@@ -329,6 +329,11 @@ def get_all_articles(limit: int = 50) -> List[Dict]:
     """
     获取所有订阅的常规文章（聚合RSS）
     只返回轮询器拉取的文章（source='poll'），不包含历史文章
+    
+    [2026-05-06 优化] 使用窗口函数实现"每号限额 + 总数限制"策略：
+    - 根据订阅数量动态调整每个号的文章数限制
+    - 保证每个订阅号都有文章显示（避免活跃号占满）
+    - 单订阅场景与单个 RSS 保持一致
     """
     conn = _get_conn()
     try:
@@ -338,16 +343,68 @@ def get_all_articles(limit: int = 50) -> List[Dict]:
             return []
         
         fakeid_list = [s["fakeid"] for s in subs]
+        subscription_count = len(fakeid_list)
+        
+        # 根据订阅数量计算动态限制
+        per_sub_limit, total_limit = _calculate_aggregated_limits(subscription_count)
+        
+        # 使用实际的 limit 参数作为总数上限（用户可自定义）
+        total_limit = min(limit, total_limit)
+        
         placeholders = ",".join("?" * len(fakeid_list))
         
+        # 使用窗口函数：每个订阅号最多 N 篇，总共最多 M 篇
         rows = conn.execute(
-            f"SELECT * FROM articles WHERE fakeid IN ({placeholders}) AND source='poll' "
-            "ORDER BY publish_time DESC LIMIT ?",
-            (*fakeid_list, limit),
+            f"""
+            WITH ranked_articles AS (
+                SELECT 
+                    *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY fakeid 
+                        ORDER BY publish_time DESC
+                    ) AS rn
+                FROM articles
+                WHERE fakeid IN ({placeholders}) AND source='poll'
+            )
+            SELECT * FROM ranked_articles
+            WHERE rn <= ?
+            ORDER BY publish_time DESC
+            LIMIT ?
+            """,
+            (*fakeid_list, per_sub_limit, total_limit),
         ).fetchall()
+        
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def _calculate_aggregated_limits(subscription_count: int) -> tuple:
+    """
+    根据订阅数量动态计算聚合 RSS 的限制策略
+    
+    Args:
+        subscription_count: 订阅数量
+    
+    Returns:
+        (per_sub_limit, total_limit): 每个订阅号的限额、总数上限
+    
+    策略设计：
+    - 每个订阅号统一 30 篇
+    - total_limit = subscription_count * 30（精确计算）
+    - 最高支持 4500 篇（150 订阅 * 30）
+    """
+    if subscription_count == 0:
+        return (0, 0)
+    
+    per_sub_limit = 30
+    total_limit = subscription_count * 30
+    
+    # 上限：4500 篇（对应 150 个订阅）
+    if total_limit > 4500:
+        total_limit = 4500
+    
+    return (per_sub_limit, total_limit)
 
 
 # ── 黑名单管理 ─────────────────────────────────────────────
@@ -599,6 +656,8 @@ def get_articles_by_category(category_id: int, limit: int = 50) -> List[Dict]:
     """
     获取分类下所有订阅的常规文章
     只返回轮询器拉取的文章（source='poll'），不包含历史文章
+    
+    [2026-05-06 优化] 使用窗口函数实现"每号限额 + 总数限制"策略
     """
     conn = _get_conn()
     try:
@@ -611,12 +670,35 @@ def get_articles_by_category(category_id: int, limit: int = 50) -> List[Dict]:
             return []
         
         fakeid_list = [s["fakeid"] for s in subs]
+        subscription_count = len(fakeid_list)
+        
+        # [2026-05-06 优化] 使用窗口函数实现"每号限额 + 总数限制"策略
+        # 根据订阅数量计算动态限制
+        per_sub_limit, total_limit = _calculate_aggregated_limits(subscription_count)
+        # 使用实际的 limit 参数作为总数上限（用户可自定义）
+        total_limit = min(limit, total_limit)
+        
         placeholders = ",".join("?" * len(fakeid_list))
         
+        # 使用窗口函数：每个订阅号最多 N 篇，总共最多 M 篇
         rows = conn.execute(
-            f"SELECT * FROM articles WHERE fakeid IN ({placeholders}) AND source='poll' "
-            "ORDER BY publish_time DESC LIMIT ?",
-            (*fakeid_list, limit),
+            f"""
+            WITH ranked_articles AS (
+                SELECT 
+                    *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY fakeid 
+                        ORDER BY publish_time DESC
+                    ) AS rn
+                FROM articles
+                WHERE fakeid IN ({placeholders}) AND source='poll'
+            )
+            SELECT * FROM ranked_articles
+            WHERE rn <= ?
+            ORDER BY publish_time DESC
+            LIMIT ?
+            """,
+            (*fakeid_list, per_sub_limit, total_limit),
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
