@@ -336,16 +336,25 @@ def _rfc822(ts: int) -> str:
 
 def _to_xml_string(doc) -> str:
     """
-    将 DOM 转为 XML 字符串（统一方法）。
-    关键：使用 encoding='utf-8' 返回 bytes，避免 encoding=None 时内部调用 toprettyxml 导致 MemoryError。
+    将 DOM 转为 XML 字符串（统一方法，内存优化版）。
+    关键优化：
+    1. 使用 encoding='utf-8' 返回 bytes，避免 encoding=None 时内部调用 toprettyxml
+    2. 在 bytes 层面移除 XML 声明，避免先 decode 大字符串再 split 导致内存翻倍
     """
     # 使用 encoding='utf-8' 返回 bytes，避免内存问题
     xml_bytes = doc.toxml(encoding='utf-8')
-    xml_str = xml_bytes.decode('utf-8')
     
-    # 去掉自动生成的 <?xml> 声明（包含 encoding='utf-8'），使用标准声明
-    if xml_str.startswith('<?xml'):
-        xml_str = xml_str.split('?>', 1)[-1].strip()
+    # 在 bytes 层面去掉自动生成的 <?xml> 声明，避免内存翻倍
+    # 例如: b'<?xml version="1.0" encoding="utf-8"?><rss>...'
+    if xml_bytes.startswith(b'<?xml'):
+        # 找到 ?> 的位置
+        end_pos = xml_bytes.find(b'?>')
+        if end_pos != -1:
+            # 跳过 ?> 并去除前导空白，直接在 bytes 上操作
+            xml_bytes = xml_bytes[end_pos + 2:].lstrip()
+    
+    # 最后一次性 decode
+    xml_str = xml_bytes.decode('utf-8')
     
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
 
