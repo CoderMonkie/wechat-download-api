@@ -334,6 +334,22 @@ def _rfc822(ts: int) -> str:
     return dt.strftime("%a, %d %b %Y %H:%M:%S +0000")
 
 
+def _to_xml_string(doc) -> str:
+    """
+    将 DOM 转为 XML 字符串（统一方法）。
+    关键：使用 encoding='utf-8' 返回 bytes，避免 encoding=None 时内部调用 toprettyxml 导致 MemoryError。
+    """
+    # 使用 encoding='utf-8' 返回 bytes，避免内存问题
+    xml_bytes = doc.toxml(encoding='utf-8')
+    xml_str = xml_bytes.decode('utf-8')
+    
+    # 去掉自动生成的 <?xml> 声明（包含 encoding='utf-8'），使用标准声明
+    if xml_str.startswith('<?xml'):
+        xml_str = xml_str.split('?>', 1)[-1].strip()
+    
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
+
+
 def _build_historical_rss_xml(
     fakeid: str, sub: dict, articles: list, base_url: str,
     page: int = 1, total_pages: int = 1, total_count: int = 0
@@ -478,12 +494,7 @@ def _build_historical_rss_xml(
         
         channel.appendChild(item)
     
-    # 生成 XML 字符串（使用 toxml 而非 toprettyxml 以避免 MemoryError）
-    xml_str = doc.toxml(encoding=None)
-    if xml_str.startswith('<?xml'):
-        xml_str = xml_str.split('?>', 1)[-1].strip()
-    
-    return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
+    return _to_xml_string(doc)
 
 
 def _build_rss_xml(fakeid: str, sub: dict, articles: list,
@@ -618,14 +629,7 @@ def _build_rss_xml(fakeid: str, sub: dict, articles: list,
         
         channel.appendChild(item)
     
-    # 生成 XML 字符串（使用 toxml 而非 toprettyxml 以避免 MemoryError）
-    xml_str = doc.toxml(encoding=None)
-    
-    # 移除默认的 XML 声明（我们自己添加）
-    if xml_str.startswith('<?xml'):
-        xml_str = xml_str.split('?>', 1)[-1].strip()
-    
-    return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
+    return _to_xml_string(doc)
 
 
 @router.get("/rss/{fakeid}", summary="获取 RSS 订阅源",
@@ -834,11 +838,7 @@ def _build_aggregated_rss_xml(articles: list, nickname_map: dict,
 
         channel.appendChild(item)
 
-    # 生成 XML 字符串（使用 toxml 而非 toprettyxml 以避免 MemoryError）
-    xml_str = doc.toxml(encoding=None)
-    if xml_str.startswith('<?xml'):
-        xml_str = xml_str.split('?>', 1)[-1].strip()
-    return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
+    return _to_xml_string(doc)
 
 
 # ── 分类 RSS feed ────────────────────────────────────────
@@ -994,8 +994,4 @@ def _build_category_rss_xml(category: dict, articles: list, nickname_map: dict,
 
         channel.appendChild(item)
 
-    # 生成 XML 字符串（使用 toxml 而非 toprettyxml 以避免 MemoryError）
-    xml_str = doc.toxml(encoding=None)
-    if xml_str.startswith('<?xml'):
-        xml_str = xml_str.split('?>', 1)[-1].strip()
-    return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
+    return _to_xml_string(doc)
