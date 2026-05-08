@@ -20,12 +20,18 @@ from typing import Optional
 import xml.etree.ElementTree as ET
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from utils import rss_store
 from utils.rss_poller import rss_poller, POLL_INTERVAL
 from utils.image_proxy import proxy_image_url
+from utils.rss_streaming import (
+    generate_single_rss_stream, 
+    generate_historical_rss_stream,
+    generate_aggregated_rss_stream,
+    generate_category_rss_stream
+)
 
 logger = logging.getLogger(__name__)
 
@@ -238,9 +244,10 @@ async def get_aggregated_rss_feed(
     articles = rss_store.get_all_articles(limit=limit) if subs else []
 
     base_url = get_base_url(request)
-    xml = _build_aggregated_rss_xml(articles, nickname_map, base_url)
-    return Response(
-        content=xml,
+    
+    # [2026-05-08 优化] 使用流式生成降低内存占用
+    return StreamingResponse(
+        generate_aggregated_rss_stream(articles, nickname_map, base_url),
         media_type="application/rss+xml; charset=utf-8",
         headers={"Cache-Control": "public, max-age=600"},
     )
@@ -334,9 +341,13 @@ def _rfc822(ts: int) -> str:
     return dt.strftime("%a, %d %b %Y %H:%M:%S +0000")
 
 
+# [2026-05-08] 以下minidom函数已废弃，现已全部改用流式生成 (utils/rss_streaming.py)
+# _to_xml_string, _build_historical_rss_xml, _build_rss_xml, 
+# _build_aggregated_rss_xml, _build_category_rss_xml 已废弃但保留以备回退
+
 def _to_xml_string(doc) -> str:
     """
-    将 DOM 转为 XML 字符串（统一方法，内存优化版）。
+    [已废弃 2026-05-08] 将 DOM 转为 XML 字符串（统一方法，内存优化版）。
     关键优化：
     1. 使用 encoding='utf-8' 返回 bytes，避免 encoding=None 时内部调用 toprettyxml
     2. 在 bytes 层面移除 XML 声明，避免先 decode 大字符串再 split 导致内存翻倍
@@ -666,10 +677,10 @@ async def get_rss_feed(fakeid: str, request: Request,
     # 只获取订阅后发布的文章（常规更新）
     articles = rss_store.get_regular_articles(fakeid, limit=limit)
     base_url = get_base_url(request)
-    xml = _build_rss_xml(fakeid, sub, articles, base_url)
-
-    return Response(
-        content=xml,
+    
+    # [2026-05-08 优化] 使用流式生成降低内存占用
+    return StreamingResponse(
+        generate_single_rss_stream(fakeid, sub, articles, base_url),
         media_type="application/rss+xml; charset=utf-8",
         headers={"Cache-Control": "public, max-age=600"},
     )
@@ -722,13 +733,12 @@ async def get_historical_rss_feed(
     total_pages = (total_count + per_page - 1) // per_page
     base_url = get_base_url(request)
     
-    xml = _build_historical_rss_xml(
-        fakeid, sub, articles, base_url,
-        page=page, total_pages=total_pages, total_count=total_count
-    )
-
-    return Response(
-        content=xml,
+    # [2026-05-08 优化] 使用流式生成降低内存占用
+    return StreamingResponse(
+        generate_historical_rss_stream(
+            fakeid, sub, articles, base_url,
+            page=page, total_pages=total_pages, total_count=total_count
+        ),
         media_type="application/rss+xml; charset=utf-8",
         headers={"Cache-Control": "public, max-age=3600"},  # 历史文章缓存更长
     )
@@ -880,10 +890,10 @@ async def get_category_rss_feed(category_id: int, request: Request,
     articles = rss_store.get_articles_by_category(category_id, limit=limit)
 
     base_url = get_base_url(request)
-    xml = _build_category_rss_xml(category, articles, nickname_map, base_url)
-
-    return Response(
-        content=xml,
+    
+    # [2026-05-08 优化] 使用流式生成降低内存占用
+    return StreamingResponse(
+        generate_category_rss_stream(category, articles, nickname_map, base_url),
         media_type="application/rss+xml; charset=utf-8",
         headers={"Cache-Control": "public, max-age=600"},
     )
