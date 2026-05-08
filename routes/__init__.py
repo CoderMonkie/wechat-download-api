@@ -9,6 +9,6 @@
 """
 
 # 导出所有路由模块
-from . import article, articles, search, admin, login, image, health, stats, rss
+from . import article, articles, search, admin, login, image, health, stats, rss, account
 
-__all__ = ['article', 'articles', 'search', 'admin', 'login', 'image', 'health', 'stats', 'rss']
+__all__ = ['article', 'articles', 'search', 'admin', 'login', 'image', 'health', 'stats', 'rss', 'account']

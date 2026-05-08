@@ -25,6 +25,7 @@
 - **反风控体系** — Chrome TLS 指纹模拟 + SOCKS5 代理池轮转 + 三层自动限频，有效对抗微信封控
 - **文章列表 & 搜索** — 获取任意公众号历史文章列表，支持分页和关键词搜索
 - **公众号搜索** — 按名称搜索公众号，获取 FakeID
+- **公众号主体信息** — 获取公众号认证主体、认证状态、原创文章数等详细信息
 - **扫码登录** — 微信公众平台扫码登录，凭证自动保存，4 天有效期
 - **图片代理** — 代理微信 CDN 图片，解决防盗链问题
 - **Webhook 通知** — 登录过期提醒（提前24h/6h预警+已过期通知）、触发验证等事件自动推送（支持企业微信机器人）
@@ -244,6 +245,38 @@ curl "http://localhost:5000/api/public/searchbiz?query=公众号名称"
 ```
 
 返回字段：`list[]` 公众号列表，每项包含 `fakeid`、`nickname`、`alias`、`round_head_img`
+
+### 获取公众号主体信息
+
+`GET /api/public/accountinfo` — 获取公众号的认证主体、认证状态、原创文章数等信息
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `fakeid` | string | 是 | 公众号的 FakeID（从搜索接口获取） |
+
+请求示例：
+
+```bash
+curl "http://localhost:5000/api/public/accountinfo?fakeid=YOUR_FAKEID"
+```
+
+返回示例：
+
+```json
+{
+  "success": true,
+  "data": {
+    "identity_name": "腾讯科技(深圳)有限公司",
+    "is_verify": 2,
+    "original_article_count": 15234
+  }
+}
+```
+
+返回字段：
+- `identity_name` — 认证主体名称（公司/机构名称）
+- `is_verify` — 认证状态（`0`=未认证, `1`=微信认证, `2`=新媒体认证）
+- `original_article_count` — 原创文章总数
 
 ### 获取文章列表
 
